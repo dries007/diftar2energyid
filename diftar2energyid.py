@@ -32,6 +32,8 @@ def main():
     with open('diftar2energyid.toml') as f:
         settings = toml.load(f)
 
+    print("Settings loaded.")
+
     # By using a session, the login details are stored (cookies)
     with requests.Session() as s:
         # <3 simple POST request logins
@@ -41,6 +43,8 @@ def main():
             "RememberMe": "true",
         })
         r.raise_for_status()
+
+        print("Logged in.")
 
         # Gotten via Chrome network inspection.
         # Set DisplayLength to 100 to get 100 entries instead of pages of 10.
@@ -56,6 +60,8 @@ def main():
             "Verrichtingtypeid": 2,  # "Gewicht". We don't care about account topups etc.
         })
         r.raise_for_status()
+        data = r.json()['aaData']
+        print("Got", len(data), "entries.")
         # {
         #   "sEcho": 2,
         #   "iTotalRecords": 41,
@@ -79,7 +85,7 @@ def main():
 
         # Default dict to make appending easier.
         db: dict[Kind, list[Entry]] = defaultdict(list)
-        for row in r.json()['aaData']:
+        for row in data:
             m = ENTRY_RE.fullmatch(row[2])
             if m is None:
                 raise ValueError(f"Could not parse row! {row!r}")
@@ -98,6 +104,7 @@ def main():
                 print("Missing config for", kind, ". Skipping...")
                 continue
 
+            print("Submitting", len(db[kind]), 'entries for', kind.name)
             # Send webhook request, with copied properties from config + fixed fields.
             r = s.post(settings['energyid']['url'], json={
                 **settings['energyid'][kind.name],
