@@ -104,7 +104,7 @@ def main():
                 print("Missing config for", kind, ". Skipping...")
                 continue
 
-            print("Submitting", len(db[kind]), 'entries for', kind.name)
+            print(f"Submitting {len(db[kind])} entries for {kind.name}, dates {db[kind][-1].date} to {db[kind][0].date}.")
             # Send webhook request, with copied properties from config + fixed fields.
             r = s.post(settings['energyid']['url'], json={
                 **settings['energyid'][kind.name],
