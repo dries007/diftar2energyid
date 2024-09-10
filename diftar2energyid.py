@@ -3,12 +3,16 @@
 import datetime
 import enum
 import re
+import logging
 from collections import defaultdict
 from typing import NamedTuple
 
 import requests
-import toml
+import tomllib
 
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)-8s [%(name)s] %(message)s')
+LOG = logging.getLogger("diftar2energyid")
 
 DIFTAR_BASE = 'https://www.mijndiftar.be'
 # Groups: Day, Month, Year, Kind, Weight
@@ -29,10 +33,10 @@ class Entry(NamedTuple):
 
 def main():
     # Let raise if file is missing.
-    with open('diftar2energyid.toml') as f:
-        settings = toml.load(f)
+    with open('diftar2energyid.toml', 'rb') as f:
+        settings = tomllib.load(f)
 
-    print("Settings loaded.")
+    LOG.info("Settings loaded.")
 
     # By using a session, the login details are stored (cookies)
     with requests.Session() as s:
@@ -40,28 +44,32 @@ def main():
         r = s.post(DIFTAR_BASE + '/Account/Logon', data={
             "Identifier": settings['diftar']['username'],
             "AuthenticationValue": settings['diftar']['password'],
+            "LogonByName": "aanmelden",
             "RememberMe": "true",
         })
         r.raise_for_status()
+        assert r.url.startswith(DIFTAR_BASE)
+        assert not r.url.startswith(DIFTAR_BASE + '/Error')
+        assert r.url.startswith(DIFTAR_BASE + '/Aansluitpunten')
 
-        print("Logged in.")
+        LOG.info("Logged in.")
 
         # Gotten via Chrome network inspection.
         # Set DisplayLength to 100 to get 100 entries instead of pages of 10.
         # Since there is a max of 100 entries per webhook submit, might as well limit data to that.
         # Should be enough for 1 to 2 years of data, depending on if you actually have both GTF & REST.
-        r = s.get(DIFTAR_BASE + '/Aansluitpunten/ShowResultsVerrichtingen', data={
+        r = s.get(DIFTAR_BASE + '/Aansluitpunten/ShowResultsVerrichtingen', params={
             "sEcho": 1,
             "sSearchFilter": [],
             "DisplayStart": 0,
-            "DisplayLength": 100,  # Get 100 entries iso 10
+            "DisplayLength": 100,
             "SortBy": "Verrichtingsdatum",
             "SortDirection": "asc",
             "Verrichtingtypeid": 2,  # "Gewicht". We don't care about account topups etc.
         })
         r.raise_for_status()
         data = r.json()['aaData']
-        print("Got", len(data), "entries.")
+        LOG.info("Got %d entries.", len(data))
         # {
         #   "sEcho": 2,
         #   "iTotalRecords": 41,
@@ -95,16 +103,18 @@ def main():
         # We're done appending.
         db = dict(db)
 
+
+
     # Fresh session to nuke cookies from other domain.
     with requests.Session() as s:
         kind: Kind
-        for kind in list(Kind):
+        for kind in db.keys():
             # If a section is not present in the config, don't send a request for it.
             if kind.name not in settings['energyid']:
-                print("Missing config for", kind, ". Skipping...")
+                LOG.error("Missing config for %s. Skipping...", kind)
                 continue
 
-            print(f"Submitting {len(db[kind])} entries for {kind.name}, dates {db[kind][-1].date} to {db[kind][0].date}.")
+            LOG.info("Submitting %d entries for %s, dates %s to %s.", len(db[kind]), kind.name, db[kind][-1].date, db[kind][0].date)
             # Send webhook request, with copied properties from config + fixed fields.
             r = s.post(settings['energyid']['url'], json={
                 **settings['energyid'][kind.name],
@@ -119,4 +129,9 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # noinspection PyBroadException
+    try:
+        main()
+    except Exception:
+        logging.exception("Something went wrong!")
+        exit(1)
